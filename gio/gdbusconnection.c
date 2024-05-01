@@ -3822,8 +3822,8 @@ static gboolean
 namespace_rule_matches (const gchar *namespace,
                         const gchar *name)
 {
-  gint len_namespace;
-  gint len_name;
+  size_t len_namespace;
+  size_t len_name;
 
   len_namespace = strlen (namespace);
   len_name = strlen (name);
@@ -3841,7 +3841,7 @@ static gboolean
 path_rule_matches (const gchar *path_a,
                    const gchar *path_b)
 {
-  gint len_a, len_b;
+  size_t len_a, len_b;
 
   len_a = strlen (path_a);
   len_b = strlen (path_b);
@@ -3929,7 +3929,7 @@ schedule_callbacks (GDBusConnection *connection,
                   (arg0_path == NULL || !path_rule_matches (signal_data->arg0, arg0_path)))
                 continue;
             }
-          else if (!g_str_equal (signal_data->arg0, arg0))
+          else if (arg0 == NULL || !g_str_equal (signal_data->arg0, arg0))
             continue;
         }
 
@@ -5668,7 +5668,7 @@ g_dbus_connection_register_object_with_closures (GDBusConnection     *connection
                                             object_path,
                                             interface_info,
                                             &vtable,
-                                            data,
+                                            g_steal_pointer (&data),
                                             register_object_free_func,
                                             error);
 }
