@@ -1,5 +1,5 @@
 project('glib', 'c',
-  version : '2.81.2',
+  version : '2.83.0',
   # NOTE: See the policy in docs/meson-version.md before changing the Meson dependency
   meson_version : '>= 1.2.0',
   default_options : [
@@ -677,7 +677,7 @@ functions = [
   'copy_file_range',
   'endmntent',
   'endservent',
-  'epoll_create',
+  'epoll_create1',
   'fallocate',
   'fchmod',
   'fchown',
@@ -2600,7 +2600,7 @@ if enable_systemtap
 endif
 
 # introspection
-gir_scanner = find_program('g-ir-scanner', required: get_option('introspection'))
+gir_scanner = find_program('g-ir-scanner', required: get_option('introspection'), version: '>= 1.80.0')
 enable_gir = get_option('introspection').allowed() and gir_scanner.found() and meson.can_run_host_binaries()
 
 if get_option('introspection').enabled() and not meson.can_run_host_binaries()

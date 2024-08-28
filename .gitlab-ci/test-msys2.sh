@@ -21,7 +21,8 @@ pacman --noconfirm -S --needed \
     "${MINGW_PACKAGE_PREFIX}"-python-pip \
     "${MINGW_PACKAGE_PREFIX}"-toolchain \
     "${MINGW_PACKAGE_PREFIX}"-zlib \
-    "${MINGW_PACKAGE_PREFIX}"-libelf
+    "${MINGW_PACKAGE_PREFIX}"-libelf \
+    "${MINGW_PACKAGE_PREFIX}"-gdb
 
 mkdir -p _coverage
 mkdir -p _ccache
@@ -32,6 +33,11 @@ export CCACHE_BASEDIR CCACHE_DIR
 PATH="$(cygpath "$USERPROFILE")/.local/bin:$HOME/.local/bin:$PATH"
 DIR="$(pwd)"
 export PATH CFLAGS
+
+mkdir -p gobject-introspection
+git clone --branch "${GOBJECT_INTROSPECTION_TAG}" https://gitlab.gnome.org/GNOME/gobject-introspection.git gobject-introspection
+meson gobject-introspection gobject-introspection/build --prefix "/c/msys64/${MSYSTEM}/usr"
+meson install -C gobject-introspection/build
 
 # FIXME: We can’t use ${MESON_COMMON_OPTIONS} here because this script installs
 # Meson 1.3. See the comment in .gitlab-ci.yml about the same problem on
