@@ -409,6 +409,7 @@ headers = [
   'strings.h',
   'sys/auxv.h',
   'sys/event.h',
+  'sys/uio.h',
   'sys/filio.h',
   'sys/inotify.h',
   'sys/mkdev.h',
@@ -550,6 +551,7 @@ endforeach
 if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
   warning_common_args = [
     '-Wduplicated-branches',
+    '-Wfloat-conversion',
     '-Wimplicit-fallthrough',
     '-Wmisleading-indentation',
     '-Wmissing-field-initializers',
@@ -2737,4 +2739,5 @@ summary({
   'libelf' : get_option('libelf'),
   'multiarch' : get_option('multiarch'),
   'introspection' : enable_gir,
+  'file_monitor_backend' : get_option('file_monitor_backend'),
 }, section: 'Options')
