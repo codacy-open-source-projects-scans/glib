@@ -2887,6 +2887,15 @@ test_container (void)
 }
 
 static void
+do_failed_test (const char *test,
+                const gchar *pattern)
+{
+  g_test_trap_subprocess (test, 1000000, G_TEST_SUBPROCESS_DEFAULT);
+  g_test_trap_assert_failed ();
+  g_test_trap_assert_stderr (pattern);
+}
+
+static void
 test_string (void)
 {
   /* Test some different methods of creating strings */
@@ -2935,6 +2944,35 @@ test_utf8 (void)
    */
   g_assert_true (g_variant_get_string (value, NULL) == invalid);
   g_variant_unref (value);
+}
+
+static void
+test_utf8_bad_new_string (void)
+{
+  g_variant_new_string ("hello\xffworld");
+
+  g_assert_not_reached ();
+}
+
+static void
+test_utf8_bad_new_take_string (void)
+{
+  g_variant_new_take_string (g_strdup ("hello\xffworld"));
+
+  g_assert_not_reached ();
+}
+
+static void
+test_utf8_new_strings (void)
+{
+  if (g_test_undefined ())
+    {
+      do_failed_test ("/gvariant/utf8/subprocess/bad-new-string",
+                      "*g_variant_new_string(): requires valid UTF-8*");
+
+      do_failed_test ("/gvariant/utf8/subprocess/bad-new-take-string",
+                      "*g_variant_new_take_string(): requires valid UTF-8*");
+    }
 }
 
 static void
@@ -2996,15 +3034,6 @@ test_format_strings (void)
 
   type = g_variant_format_string_scan_type ("mm(@xy^a&*?@?)", NULL, NULL);
   g_assert_null (type);
-}
-
-static void
-do_failed_test (const char *test,
-                const gchar *pattern)
-{
-  g_test_trap_subprocess (test, 1000000, G_TEST_SUBPROCESS_DEFAULT);
-  g_test_trap_assert_failed ();
-  g_test_trap_assert_stderr (pattern);
 }
 
 static void
@@ -5055,6 +5084,28 @@ test_stack_builder_init (void)
   g_variant_unref (variant);
 }
 
+static void
+test_stack_builder_init_static (void)
+{
+  GVariantBuilder builder;
+  GVariant *variant;
+
+  g_variant_builder_init_static (&builder, G_VARIANT_TYPE_BYTESTRING);
+  g_variant_builder_add_value (&builder, g_variant_new_byte ('g'));
+  g_variant_builder_add_value (&builder, g_variant_new_byte ('l'));
+  g_variant_builder_add_value (&builder, g_variant_new_byte ('i'));
+  g_variant_builder_add_value (&builder, g_variant_new_byte ('b'));
+  g_variant_builder_add_value (&builder, g_variant_new_byte ('\0'));
+
+  variant = g_variant_ref_sink (g_variant_builder_end (&builder));
+  g_assert_nonnull (variant);
+  g_assert_true (g_variant_type_equal (g_variant_get_type (variant),
+                                       G_VARIANT_TYPE_BYTESTRING));
+  g_assert_cmpuint (g_variant_n_children (variant), ==, 5);
+  g_assert_cmpstr (g_variant_get_bytestring (variant), ==, "glib");
+  g_variant_unref (variant);
+}
+
 static GVariant *
 get_asv (void)
 {
@@ -5830,6 +5881,24 @@ test_unaligned_construction (void)
     }
 }
 
+static void
+test_g_variant_type_hash (void)
+{
+  char mas[4] = {'m', 'a', 's', 0};
+
+  g_assert_cmpint (g_variant_type_hash (G_VARIANT_TYPE ("a(ay)")),
+                   !=,
+                   g_variant_type_hash (G_VARIANT_TYPE ("aay")));
+
+  g_assert_cmpint (g_variant_type_hash (G_VARIANT_TYPE ("a{sv}")),
+                   !=,
+                   g_variant_type_hash (G_VARIANT_TYPE ("a(sv)")));
+
+  g_assert_cmpint (g_variant_type_hash (G_VARIANT_TYPE ("mas")),
+                   ==,
+                   g_variant_type_hash ((const GVariantType *)mas));
+}
+
 int
 main (int argc, char **argv)
 {
@@ -5863,6 +5932,9 @@ main (int argc, char **argv)
 
   g_test_add_func ("/gvariant/string", test_string);
   g_test_add_func ("/gvariant/utf8", test_utf8);
+  g_test_add_func ("/gvariant/utf8/subprocess/bad-new-string", test_utf8_bad_new_string);
+  g_test_add_func ("/gvariant/utf8/subprocess/bad-new-take-string", test_utf8_bad_new_take_string);
+  g_test_add_func ("/gvariant/utf8-new-strings", test_utf8_new_strings);
   g_test_add_func ("/gvariant/containers", test_containers);
   g_test_add_func ("/gvariant/format-strings", test_format_strings);
   g_test_add_func ("/gvariant/invalid-varargs", test_invalid_varargs);
@@ -5900,6 +5972,7 @@ main (int argc, char **argv)
   g_test_add_func ("/gvariant/error-quark", test_error_quark);
 
   g_test_add_func ("/gvariant/stack-builder-init", test_stack_builder_init);
+  g_test_add_func ("/gvariant/stack-builder-init-static", test_stack_builder_init_static);
   g_test_add_func ("/gvariant/stack-dict-init", test_stack_dict_init);
 
   g_test_add_func ("/gvariant/normal-checking/tuples",
@@ -5934,6 +6007,9 @@ main (int argc, char **argv)
 
   g_test_add_func ("/gvariant/unaligned-construction",
                    test_unaligned_construction);
+
+  g_test_add_func ("/gvarianttype/hash",
+                   test_g_variant_type_hash);
 
   return g_test_run ();
 }
