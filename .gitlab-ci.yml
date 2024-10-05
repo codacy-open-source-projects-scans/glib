@@ -108,10 +108,16 @@ variables:
 
 .build-gobject-introspection:
   before_script:
-    - mkdir -p gobject-introspection
-    - git clone --branch $GOBJECT_INTROSPECTION_TAG https://gitlab.gnome.org/GNOME/gobject-introspection.git gobject-introspection
-    - meson gobject-introspection gobject-introspection/build --prefix=/usr
-    - sudo meson install -C gobject-introspection/build
+    # If the CI image doesn’t provide a new enough gobject-introspection
+    # package, build it ourselves.
+    # See https://gitlab.gnome.org/GNOME/glib/-/merge_requests/3746#note_2161354
+    - >
+      if ! pkg-config --atleast-version "${GOBJECT_INTROSPECTION_TAG}" gobject-introspection-1.0; then
+        mkdir -p gobject-introspection
+        git clone --branch $GOBJECT_INTROSPECTION_TAG https://gitlab.gnome.org/GNOME/gobject-introspection.git gobject-introspection
+        meson gobject-introspection gobject-introspection/build --prefix=/usr
+        sudo meson install -C gobject-introspection/build
+      fi
   artifacts:
     expire_in: 3 days
     paths:
@@ -510,7 +516,8 @@ cross-mingw64:
 # A note about msys2: it’s a rolling release distribution, running Windows under
 # Docker isn’t really supported, and the win32-ps CI runner is shared. All that
 # adds up to mean that we have to run CI against the latest msys2 packages, and
-# that this occasionally causes build failures in GLib due to changes in msys2.
+# that this occasionally causes deterministic build failures in GLib due to
+# changes in msys2.
 # In order to avoid that pre-empting other GLib development, the policy in such
 # cases is to:
 #  1. Immediately and without hesitation make the msys2-* CI jobs non-fatal
@@ -522,8 +529,10 @@ cross-mingw64:
 #     are notified and can work on it.
 #  4. Rebase any pending broken MRs on top of the commit which makes the CI job
 #     non-fatal, so that development on `main` is unblocked.
+#
+# This policy doesn’t apply to intermittent flaky test failures, only to
+# consistent build failures caused by changed dependencies or build environment.
 msys2-mingw32:
-  allow_failure: true
   extends: .only-default-and-merges
   stage: build
   tags:
@@ -656,14 +665,7 @@ freebsd-13-x86_64:
   before_script:
     - bash .gitlab-ci/show-execution-environment.sh
   script:
-    # FIXME: We can’t use ${MESON_COMMON_OPTIONS} here because the FreeBSD 13
-    # runner has Meson 1.3 installed. This has an API hole where previous
-    # methods of getting paths from files() objects are rejected as deprecated,
-    # but no replacements are available. Hence, we can’t build with
-    # --fatal-meson-warnings. This should be fixed in Meson 1.4. It’s also fine
-    # with Meson 1.2.3 (which is what we use on all the other CI runners).
-    # See https://github.com/GNOME/glib/commit/71061fdcb33b8c26f5f8467cb3ac10704d65c87d
-    - meson setup --buildtype debug --wrap-mode=nodownload
+    - meson setup ${MESON_COMMON_OPTIONS}
             --localstatedir=/var
             -Db_lundef=false
             -Dxattr=false
