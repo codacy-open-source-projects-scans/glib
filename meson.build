@@ -69,6 +69,7 @@ else
 endif
 
 host_system = host_machine.system()
+subsystem = ''
 
 if host_system == 'darwin'
   ios_test_code = '''#include <TargetConditionals.h>
@@ -89,6 +90,8 @@ if host_system == 'linux'
   if cc.compiles(musl_test_code, name : 'building for musl libc')
     linux_libc = 'musl'
   endif
+elif host_system == 'darwin'
+  subsystem = host_machine.subsystem()
 endif
 
 glib_version = meson.project_version()
@@ -1004,7 +1007,7 @@ endif
 osx_ldflags = []
 glib_have_carbon = false
 glib_have_cocoa = false
-if host_system == 'darwin'
+if host_system == 'darwin' and subsystem == 'macos'
   add_languages('objc', native: false, required: true)
   objcc = meson.get_compiler('objc')
   if not objcc.compiles('''#include <AvailabilityMacros.h>
@@ -2016,7 +2019,7 @@ poll_defines = [
 
 if has_syspoll and has_systypes
   foreach d : poll_defines
-    val = cc.compute_int(d[0], prefix: poll_includes)
+    val = cc.compute_int(d[0], prefix: poll_includes, guess: d[2])
     glibconfig_conf.set(d[1], val)
   endforeach
 elif has_winsock2
@@ -2043,15 +2046,15 @@ else
 endif
 
 inet_defines = [
-  [ 'AF_UNIX', 'g_af_unix' ],
-  [ 'AF_INET', 'g_af_inet' ],
-  [ 'AF_INET6', 'g_af_inet6' ],
-  [ 'MSG_OOB', 'g_msg_oob' ],
-  [ 'MSG_PEEK', 'g_msg_peek' ],
-  [ 'MSG_DONTROUTE', 'g_msg_dontroute' ],
+  [ 'AF_UNIX', 'g_af_unix', 1 ],
+  [ 'AF_INET', 'g_af_inet', 2 ],
+  [ 'AF_INET6', 'g_af_inet6', 30 ],
+  [ 'MSG_OOB', 'g_msg_oob', 1 ],
+  [ 'MSG_PEEK', 'g_msg_peek', 2 ],
+  [ 'MSG_DONTROUTE', 'g_msg_dontroute', 4 ],
 ]
 foreach d : inet_defines
-  val = cc.compute_int(d[0], prefix: inet_includes)
+  val = cc.compute_int(d[0], prefix: inet_includes, guess: d[2])
   glibconfig_conf.set(d[1], val)
 endforeach
 
