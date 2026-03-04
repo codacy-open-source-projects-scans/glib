@@ -261,6 +261,7 @@ if host_machine.system() == 'windows'
 else
   glib_tests += {
     'include' : {},
+    'poll-fdset' : {},
     'unix' : {},
   }
   if have_rtld_next and glib_build_shared
@@ -324,11 +325,6 @@ if installed_tests_enabled
   install_subdir('time-zones',
     install_dir : installed_tests_execdir,
     install_tag : 'tests',
-  )
-  install_subdir('localtime',
-    install_dir : installed_tests_execdir,
-    install_tag : 'tests',
-    follow_symlinks : false,
   )
 endif
 
