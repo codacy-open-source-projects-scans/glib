@@ -41,7 +41,7 @@ cache:
     - _ccache/
 
 variables:
-  FEDORA_IMAGE: "registry.gitlab.gnome.org/gnome/glib/fedora:v41.3"
+  FEDORA_IMAGE: "registry.gitlab.gnome.org/gnome/glib/fedora:v41.5"
   COVERITY_IMAGE: "registry.gitlab.gnome.org/gnome/glib/coverity:v7"
   DEBIAN_IMAGE: "registry.gitlab.gnome.org/gnome/glib/debian-stable:v25"
   DEBIAN_I386_IMAGE: "registry.gitlab.gnome.org/gnome/glib/debian-stable-i386:v5"
@@ -541,7 +541,92 @@ valgrind:
                  --no-suite slow
   artifacts:
     reports:
-      junit: "_build/meson-logs/testlog-valgrind.junit.xml"
+      junit:
+        - _build/meson-logs/testlog-*.junit.xml
+    name: "glib-${CI_JOB_NAME}-${CI_COMMIT_REF_NAME}"
+    when: always
+    expire_in: 1 week
+    paths:
+      - "_build/config.h"
+      - "_build/glib/glibconfig.h"
+      - "_build/meson-logs"
+
+address-sanitizer:
+  extends:
+    - .build-linux
+    - .only-schedules-or-manual
+    - .with-git
+  image: "${FEDORA_IMAGE}"
+  stage: analysis
+  tags: [asan]
+  needs: []
+  variables:
+    MESON_TEST_TIMEOUT_MULTIPLIER: 5
+  before_script:
+    - !reference [".build-linux", "before_script"]
+    - !reference [".with-git", "before_script"]
+    - !reference [".build-gobject-introspection", "before_script"]
+  script:
+    - meson setup ${MESON_COMMON_OPTIONS}
+            --werror
+            -Dsystemtap=enabled
+            -Ddtrace=enabled
+            -Dinstalled_tests=true
+            -Dintrospection=enabled
+            -Db_sanitize=address,undefined
+            _build
+    # Do not run ninja, let meson handle the build dependencies!
+    # This tests that all tests have the right build dependencies specified.
+    - bash -x ./.gitlab-ci/run-tests.sh
+  artifacts:
+    reports:
+      junit:
+        - _build/meson-logs/testlog.junit.xml
+        - _build/meson-logs/testlog-*.junit.xml
+    name: "glib-${CI_JOB_NAME}-${CI_COMMIT_REF_NAME}"
+    when: always
+    expire_in: 1 week
+    paths:
+      - "_build/config.h"
+      - "_build/glib/glibconfig.h"
+      - "_build/meson-logs"
+
+thread-sanitizer:
+  extends:
+    - .build-linux
+    - .only-schedules-or-manual
+    - .with-git
+  image: "${FEDORA_IMAGE}"
+  stage: analysis
+  tags: [asan]
+  needs: []
+  variables:
+    MESON_TEST_TIMEOUT_MULTIPLIER: 10
+  before_script:
+    - !reference [".build-linux", "before_script"]
+    - !reference [".with-git", "before_script"]
+    - !reference [".build-gobject-introspection", "before_script"]
+  script:
+    # FIXME: We disable introspection in this build, as dynamically loading libraries
+    # in TSAN may lead to a well known issue:
+    # libtsan.so.2: cannot allocate memory in static TLS block
+    # See https://github.com/mesonbuild/meson/issues/16127
+    - meson setup ${MESON_COMMON_OPTIONS}
+            --werror
+            -Dinstalled_tests=true
+            -Dintrospection=disabled
+            -Db_sanitize=thread
+            -Dglib_debug=disabled
+            -Ddtrace=disabled
+            _build
+    # Do not run ninja, let meson handle the build dependencies!
+    # This tests that all tests have the right build dependencies specified.
+    - bash -x ./.gitlab-ci/run-tests.sh --no-suite=no-tsan
+  artifacts:
+    reports:
+      junit:
+        - _build/meson-logs/testlog.junit.xml
+        - _build/meson-logs/testlog-*.junit.xml
     name: "glib-${CI_JOB_NAME}-${CI_COMMIT_REF_NAME}"
     when: always
     expire_in: 1 week
@@ -618,7 +703,7 @@ cross-mingw64:
 # This policy doesn’t apply to intermittent flaky test failures, only to
 # consistent build failures caused by changed dependencies or build environment.
 msys2-mingw32:
-  extends: .only-default-and-merges
+  extends: .only-schedules-or-manual
   stage: build
   tags:
     - win32-ps
@@ -628,7 +713,38 @@ msys2-mingw32:
     GIT_SUBMODULE_DEPTH: 1
     MSYSTEM: "MINGW32"
     CHERE_INVOKING: "yes"
+    PYTHONUTF8: "1"
+  script:
+    - C:\msys64\usr\bin\pacman --noconfirm -Syyuu
+    - C:\msys64\usr\bin\bash .gitlab-ci/show-execution-environment.sh
+    - C:\msys64\usr\bin\bash -lc "bash -x ./.gitlab-ci/test-msys2.sh"
+  artifacts:
+    reports:
+      junit:
+        - _build/meson-logs/testlog.junit.xml
+        - _build/meson-logs/testlog-*.junit.xml
+    name: "glib-${env:CI_JOB_NAME}-${env:CI_COMMIT_REF_NAME}"
+    when: always
+    expire_in: 1 week
+    paths:
+      - _build/meson-logs
+      - _build/gdb.txt
+
+# See the note about msys2 CI job failure policy above.
+msys2-clang64:
+  extends: .only-default-and-merges
+  stage: build
+  tags:
+    - win32-ps
+  needs: []
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    GIT_SUBMODULE_DEPTH: 1
+    MSYSTEM: "CLANG64"
+    CHERE_INVOKING: "yes"
     COVERAGE: "1"
+    INTROSPECTION: "1"
+    DOCUMENTATION: "1"
     PYTHONUTF8: "1"
     G_DEBUGGER: 'gdb.exe -batch -ex "set logging enabled on" -ex "attach %p" -ex "signal-event %e" -ex "c" -ex "thread apply all bt full" -ex "k"'
   script:
@@ -649,32 +765,6 @@ msys2-mingw32:
       - _coverage/
       - _reference/
       - "${GIR_ARTIFACTS_PATH}/*.gir"
-
-# See the note about msys2 CI job failure policy above.
-msys2-clang64:
-  extends: .only-schedules-or-manual
-  stage: build
-  tags:
-    - win32-ps
-  needs: []
-  variables:
-    GIT_SUBMODULE_STRATEGY: recursive
-    GIT_SUBMODULE_DEPTH: 1
-    MSYSTEM: "CLANG64"
-    CHERE_INVOKING: "yes"
-    PYTHONUTF8: "1"
-  script:
-    - C:\msys64\usr\bin\pacman --noconfirm -Syyuu
-    - C:\msys64\usr\bin\bash .gitlab-ci/show-execution-environment.sh
-    - C:\msys64\usr\bin\bash -lc "bash -x ./.gitlab-ci/test-msys2.sh"
-  artifacts:
-    reports:
-      junit: "_build/meson-logs/testlog.junit.xml"
-    name: "glib-${env:CI_JOB_NAME}-${env:CI_COMMIT_REF_NAME}"
-    when: always
-    expire_in: 1 week
-    paths:
-      - _build/meson-logs
 
 vs2019-x64:
   extends: .only-default
@@ -816,11 +906,11 @@ vs2019-arm64:
       - _build/gthread/libgthread-2.0-0.dll
       - _build/gobject/libgobject-2.0-0.dll
 
-freebsd-13-x86_64:
+freebsd-14-x86_64:
   extends: .only-schedules-or-manual
   stage: build
   tags:
-    - freebsd-13
+    - freebsd-14
   needs: []
   variables:
     CPPFLAGS: -I/usr/local/include
@@ -831,10 +921,10 @@ freebsd-13-x86_64:
   script:
     - meson setup ${MESON_COMMON_OPTIONS}
             --localstatedir=/var
-            -Db_lundef=false
             -Dxattr=false
             -Dsystemtap=disabled
             -Ddtrace=disabled
+            -Dintrospection=disabled
             _build
     - meson compile -C _build
     - bash -x ./.gitlab-ci/run-tests.sh
@@ -915,7 +1005,7 @@ coverage:
   extends: .only-default
   image: "${FEDORA_IMAGE}"
   stage: coverage
-  needs: ['fedora-x86_64', 'msys2-mingw32']
+  needs: ['fedora-x86_64', 'msys2-clang64']
   artifacts:
     name: "glib-${CI_JOB_NAME}-${CI_COMMIT_REF_NAME}"
     expire_in: 1 week
@@ -1000,9 +1090,9 @@ check-introspection-fedora-x86_64:
     JOB_NAME: fedora-x86_64
   extends: .check-introspection
 
-check-introspection-msys2-mingw32:
+check-introspection-msys2-clang64:
   variables:
-    JOB_NAME: msys2-mingw32
+    JOB_NAME: msys2-clang64
   extends: .check-introspection
 
 scan-build:

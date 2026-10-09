@@ -261,31 +261,31 @@ g_steal_pointer (gpointer pp)
 #if defined (__GNUC__) && (__GNUC__ >= 2) && defined (__OPTIMIZE__)
 #  define _G_NEW(struct_type, n_structs, func) \
 	(struct_type *) (G_GNUC_EXTENSION ({			\
-	  gsize __n = (gsize) (n_structs);			\
-	  gsize __s = sizeof (struct_type);			\
-	  gpointer __p;						\
-	  if (__s == 1)						\
-	    __p = g_##func (__n);				\
-	  else if (__builtin_constant_p (__n) &&		\
-	           (__s == 0 || __n <= G_MAXSIZE / __s))	\
-	    __p = g_##func (__n * __s);				\
+	  gsize _n = (gsize) (n_structs);			\
+	  gsize _s = sizeof (struct_type);			\
+	  gpointer _p;						\
+	  if (_s == 1)						\
+	    _p = g_##func (_n);					\
+	  else if (__builtin_constant_p (_n) &&			\
+	           (_s == 0 || _n <= G_MAXSIZE / _s))		\
+	    _p = g_##func (_n * _s);				\
 	  else							\
-	    __p = g_##func##_n (__n, __s);			\
-	  __p;							\
+	    _p = g_##func##_n (_n, _s);				\
+	  _p;							\
 	}))
 #  define _G_RENEW(struct_type, mem, n_structs, func) \
 	(struct_type *) (G_GNUC_EXTENSION ({			\
-	  gsize __n = (gsize) (n_structs);			\
-	  gsize __s = sizeof (struct_type);			\
-	  gpointer __p = (gpointer) (mem);			\
-	  if (__s == 1)						\
-	    __p = g_##func (__p, __n);				\
-	  else if (__builtin_constant_p (__n) &&		\
-	           (__s == 0 || __n <= G_MAXSIZE / __s))	\
-	    __p = g_##func (__p, __n * __s);			\
+	  gsize _n = (gsize) (n_structs);			\
+	  gsize _s = sizeof (struct_type);			\
+	  gpointer _p = (gpointer) (mem);			\
+	  if (_s == 1)						\
+	    _p = g_##func (_p, _n);				\
+	  else if (__builtin_constant_p (_n) &&			\
+	           (_s == 0 || _n <= G_MAXSIZE / _s))		\
+	    _p = g_##func (_p, _n * _s);			\
 	  else							\
-	    __p = g_##func##_n (__p, __n, __s);			\
-	  __p;							\
+	    _p = g_##func##_n (_p, _n, _s);			\
+	  _p;							\
 	}))
 
 #else
@@ -355,7 +355,7 @@ g_steal_pointer (gpointer pp)
  * Attempts to allocate @n_structs elements of type @struct_type, and returns
  * %NULL on failure. Contrast with g_new(), which aborts the program on failure.
  * The returned pointer is cast to a pointer to the given type.
- * The function returns %NULL when @n_structs is 0 of if an overflow occurs.
+ * The function returns %NULL when @n_structs is 0 or if an overflow occurs.
  * 
  * Since: 2.8
  * Returns: a pointer to the allocated memory, cast to a pointer to @struct_type

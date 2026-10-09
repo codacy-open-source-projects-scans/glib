@@ -2647,11 +2647,6 @@ g_type_add_interface_static (GType                 instance_type,
   g_return_if_fail (G_TYPE_IS_INSTANTIATABLE (instance_type));
   g_return_if_fail (g_type_parent (interface_type) == G_TYPE_INTERFACE);
 
-  /* we only need to lock class_init_rec_mutex if instance_type already has its
-   * class initialized, however this function is rarely enough called to take
-   * the simple route and always acquire class_init_rec_mutex.
-   */
-  g_rec_mutex_lock (&class_init_rec_mutex); /* required locking order: 1) class_init_rec_mutex, 2) type_rw_lock */
   G_WRITE_LOCK (&type_rw_lock);
   if (check_add_interface_L (instance_type, interface_type))
     {
@@ -2661,7 +2656,6 @@ g_type_add_interface_static (GType                 instance_type,
         type_add_interface_Wm (node, iface, info, NULL);
     }
   G_WRITE_UNLOCK (&type_rw_lock);
-  g_rec_mutex_unlock (&class_init_rec_mutex);
 }
 
 /**
@@ -2688,8 +2682,6 @@ g_type_add_interface_dynamic (GType        instance_type,
   if (!check_plugin_U (plugin, FALSE, TRUE, NODE_NAME (node)))
     return;
 
-  /* see comment in g_type_add_interface_static() about class_init_rec_mutex */
-  g_rec_mutex_lock (&class_init_rec_mutex); /* required locking order: 1) class_init_rec_mutex, 2) type_rw_lock */
   G_WRITE_LOCK (&type_rw_lock);
   if (check_add_interface_L (instance_type, interface_type))
     {
@@ -2697,7 +2689,6 @@ g_type_add_interface_dynamic (GType        instance_type,
       type_add_interface_Wm (node, iface, NULL, plugin);
     }
   G_WRITE_UNLOCK (&type_rw_lock);
-  g_rec_mutex_unlock (&class_init_rec_mutex);
 }
 
 
@@ -3080,13 +3071,9 @@ g_type_default_interface_get (GType g_type)
 
   if (!node->data || !node->data->iface.dflt_vtable)
     {
-      G_WRITE_UNLOCK (&type_rw_lock);
-      g_rec_mutex_lock (&class_init_rec_mutex); /* required locking order: 1) class_init_rec_mutex, 2) type_rw_lock */
-      G_WRITE_LOCK (&type_rw_lock);
       node = lookup_type_node_I (g_type);
       type_data_ref_Wm (node);
       type_iface_ensure_dflt_vtable_Wm (node);
-      g_rec_mutex_unlock (&class_init_rec_mutex);
     }
 
   dflt_vtable = node->data->iface.dflt_vtable;
@@ -4825,15 +4812,18 @@ g_type_class_get_private (GTypeClass *klass,
  * Ensures that the indicated @type has been registered with the
  * type system, and its _class_init() method has been run.
  *
- * In theory, simply calling the type's _get_type() method (or using
- * the corresponding macro) is supposed take care of this. However,
- * _get_type() methods are often marked %G_GNUC_CONST for performance
- * reasons, even though this is technically incorrect (since
- * %G_GNUC_CONST requires that the function not have side effects,
- * which _get_type() methods do on the first call). As a result, if
- * you write a bare call to a _get_type() macro, it may get optimized
- * out by the compiler. Using g_type_ensure() guarantees that the
- * type's _get_type() method is called.
+ * Typically, calling the type’s `_get_type()` method (or using the
+ * corresponding macro) will take care of this. In situations where a
+ * type is looked up dynamically, however, you may need to explicitly call
+ * `g_type_ensure()` to ensure expected types are registered before the
+ * first lookup. This can happen when using custom widgets from a GTK
+ * `.ui` file, for example.
+ *
+ * Historically, `_get_type()` methods have sometimes been marked as
+ * [`G_GNUC_CONST`](macros.html#compiler). This is incorrect, as the
+ * first call to a `_get_type()` method has side-effects. These
+ * annotations should be removed, as they can cause code to be optimized
+ * out in unexpected ways by the compiler.
  *
  * Since: 2.34
  */

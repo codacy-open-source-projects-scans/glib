@@ -1127,6 +1127,61 @@ g_get_host_name (void)
   return hostname;
 }
 
+/**
+ * g_get_process_executable_dir:
+ *
+ * Gets the absolute path to the directory containing the currently running
+ * executable.
+ *
+ * This is useful for locating application resources relative to the
+ * installation directory.
+ *
+ * The returned path is cached on first call and remains constant for the
+ * lifetime of the program. So, it must not be freed or modified.
+ *
+ * Returns: (transfer none) (nullable) (type filename): the absolute path
+ *   to the directory containing the program's executable, or `NULL` if
+ *   not found
+ * Since: 2.92
+ */
+const char *
+g_get_process_executable_dir (void)
+{
+  static char *toplevel = NULL;
+
+  if (toplevel == NULL)
+    {
+#if defined(G_OS_WIN32)
+      toplevel = g_win32_get_package_installation_directory_of_module (NULL);
+#elif defined(__APPLE__)
+      char pathbuf[PATH_MAX + 1];
+      uint32_t bufsize = sizeof (pathbuf);
+      char *bin_dir;
+
+      _NSGetExecutablePath (pathbuf, &bufsize);
+      bin_dir = g_path_get_dirname (pathbuf);
+      toplevel = g_build_path (G_DIR_SEPARATOR_S, bin_dir, NULL);
+      g_free (bin_dir);
+#elif defined(__linux__) || defined(__MINGW32__)
+      gchar *exe_path, *bin_dir;
+
+      exe_path = g_file_read_link ("/proc/self/exe", NULL);
+      if (exe_path == NULL)
+        return NULL;
+
+      bin_dir = g_path_get_dirname (exe_path);
+      toplevel = g_build_filename (bin_dir, NULL);
+      g_free (exe_path);
+      g_free (bin_dir);
+#else
+    /* Relocations not currently supported for this platform */
+    return NULL;
+#endif
+    }
+
+  return toplevel;
+}
+
 static const gchar *g_prgname = NULL; /* always a quark */
 
 /**
@@ -2243,6 +2298,8 @@ load_user_special_dirs_unlocked (void)
 
   g_user_special_dirs[G_USER_DIRECTORY_TEMPLATES] = get_special_folder (&FOLDERID_Templates);
   g_user_special_dirs[G_USER_DIRECTORY_VIDEOS] = get_special_folder (&FOLDERID_Videos);
+
+  g_user_special_dirs[G_USER_DIRECTORY_PROJECTS] = get_special_folder (&FOLDERID_Documents);
 }
 
 #else /* default is unix */
@@ -2809,27 +2866,6 @@ g_format_size (guint64 size)
 {
   return g_format_size_full (size, G_FORMAT_SIZE_DEFAULT);
 }
-
-/**
- * GFormatSizeFlags:
- * @G_FORMAT_SIZE_DEFAULT: behave the same as g_format_size()
- * @G_FORMAT_SIZE_LONG_FORMAT: include the exact number of bytes as part
- *     of the returned string.  For example, "45.6 kB (45,612 bytes)".
- * @G_FORMAT_SIZE_IEC_UNITS: use IEC (base 1024) units with "KiB"-style
- *     suffixes. IEC units should only be used for reporting things with
- *     a strong "power of 2" basis, like RAM sizes or RAID stripe sizes.
- *     Network and storage sizes should be reported in the normal SI units.
- * @G_FORMAT_SIZE_BITS: set the size as a quantity in bits, rather than
- *     bytes, and return units in bits. For example, ‘Mbit’ rather than ‘MB’.
- * @G_FORMAT_SIZE_ONLY_VALUE: return only value, without unit; this should
- *     not be used together with @G_FORMAT_SIZE_LONG_FORMAT
- *     nor @G_FORMAT_SIZE_ONLY_UNIT. Since: 2.74
- * @G_FORMAT_SIZE_ONLY_UNIT: return only unit, without value; this should
- *     not be used together with @G_FORMAT_SIZE_LONG_FORMAT
- *     nor @G_FORMAT_SIZE_ONLY_VALUE. Since: 2.74
- *
- * Flags to modify the format of the string returned by g_format_size_full().
- */
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"

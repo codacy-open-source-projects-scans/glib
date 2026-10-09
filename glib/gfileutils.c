@@ -1362,8 +1362,12 @@ g_file_set_contents_full (const gchar            *filename,
       GError *rename_error = NULL;
       gboolean retval;
       int fd;
-      gboolean do_fsync;
+      gboolean do_fsync, maintain_perms;
       GStatBuf old_stat;
+
+      maintain_perms = !g_stat (filename, &old_stat);
+      if (maintain_perms)
+        mode = 0600;
 
       tmp_filename = g_strdup_printf ("%s.XXXXXX", filename);
 
@@ -1382,7 +1386,7 @@ g_file_set_contents_full (const gchar            *filename,
         }
 
       /* Maintain the permissions of the file if it exists */
-      if (!g_stat (filename, &old_stat))
+      if (maintain_perms)
         {
 #ifndef G_OS_WIN32
           if (fchmod (fd, old_stat.st_mode))
@@ -1395,6 +1399,7 @@ g_file_set_contents_full (const gchar            *filename,
                 set_file_error (error,
                                 tmp_filename, _ ("Failed to set permissions of “%s”: %s"),
                                 saved_errno);
+              close (fd);
               g_unlink (tmp_filename);
               retval = FALSE;
               goto consistent_out;
@@ -2157,6 +2162,13 @@ g_build_pathname_va (const gchar  *first_element,
 
       if (TRUE)
 	{
+	  if (is_first)
+	    {
+	      /* Recognize drive letter at start of first element */
+	      if (g_ascii_isalpha (start[0]) &&
+		  start[1] == ':' && G_IS_DIR_SEPARATOR (start[2]))
+		current_separator = start[2];
+	    }
 	  while (start &&
 		 (*start == '\\' || *start == '/'))
 	    {

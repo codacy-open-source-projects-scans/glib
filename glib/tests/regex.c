@@ -371,6 +371,37 @@ test_match (gconstpointer d)
   g_regex_unref (regex);
 }
 
+static void
+test_match_without_match_info (void)
+{
+  GRegex *regex;
+  GError *error = NULL;
+
+  regex = g_regex_new ("(a)\\1", G_REGEX_OPTIMIZE, 0, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (regex);
+
+  g_assert_true (g_regex_match (regex, "aa", 0, NULL));
+  g_assert_true (g_regex_match_all (regex, "aa", 0, NULL));
+  g_assert_true (g_regex_match_all_full (regex, "aa", -1, 0, 0, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_false (g_regex_match (regex, "ab", 0, NULL));
+  g_assert_false (g_regex_match_all (regex, "ab", 0, NULL));
+  g_assert_false (g_regex_match_full (regex, "aa", 2, 3, 0, NULL, NULL));
+  g_assert_false (g_regex_match_all_full (regex, "aa", 2, 3, 0, NULL, NULL));
+
+  g_regex_unref (regex);
+
+  regex = g_regex_new (".", 0, 0, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (regex);
+
+  g_assert_false (g_regex_match (regex, "\xff", 0, NULL));
+  g_assert_no_error (error);
+
+  g_regex_unref (regex);
+}
+
 #define TEST_MATCH(_pattern, _compile_opts, _match_opts, _string, \
                    _string_len, _start_position, _match_opts2, _expected) { \
   TestMatchData *data;                                                  \
@@ -671,10 +702,22 @@ test_match_count (gconstpointer d)
   g_free (path);                                                        \
 }
 
+typedef struct {
+  const gchar *pattern;
+  const gchar *string;
+  GRegexCompileFlags compile_opts;
+  GRegexMatchFlags match_opts;
+  gssize string_len;
+  gint start_position;
+  const gchar *expected;
+  gint         expected_start;
+  gint         expected_end;
+} TestPartialData;
+
 static void
 test_partial (gconstpointer d)
 {
-  const TestMatchData *data = d;
+  const TestPartialData *data = d;
   GRegex *regex;
   GMatchInfo *match_info;
 
@@ -684,11 +727,21 @@ test_partial (gconstpointer d)
 
   g_regex_match (regex, data->string, data->match_opts, &match_info);
 
-  g_assert_cmpint (data->expected, ==, g_match_info_is_partial_match (match_info));
+  g_assert_cmpint ((data->expected != NULL), ==, (g_match_info_is_partial_match (match_info) != FALSE));
 
   if (data->expected)
     {
-      g_assert (!g_match_info_fetch_pos (match_info, 0, NULL, NULL));
+      gchar *expr;
+      gint start, end;
+
+      expr = g_match_info_fetch (match_info, 0);
+      g_assert_cmpstr (expr, ==, data->expected);
+      g_free (expr);
+
+      g_assert (g_match_info_fetch_pos (match_info, 0, &start, &end));
+      g_assert_cmpint (start, ==, data->expected_start);
+      g_assert_cmpint (end, ==, data->expected_end);
+
       g_assert (!g_match_info_fetch_pos (match_info, 1, NULL, NULL));
     }
 
@@ -696,15 +749,18 @@ test_partial (gconstpointer d)
   g_regex_unref (regex);
 }
 
-#define TEST_PARTIAL_FULL(_pattern, _string, _compile_opts, _match_opts, _expected) { \
-  TestMatchData *data;                                          \
+#define TEST_PARTIAL_FULL(_pattern, _string, _compile_opts, _match_opts, \
+                          _expected, _expected_start, _expected_end) { \
+  TestPartialData *data;                                        \
   gchar *path;                                                  \
-  data = g_new0 (TestMatchData, 1);                             \
+  data = g_new0 (TestPartialData, 1);                           \
   data->pattern = _pattern;                                     \
   data->string = _string;                                       \
   data->compile_opts = _compile_opts;                           \
   data->match_opts = _match_opts;                               \
   data->expected = _expected;                                   \
+  data->expected_start = _expected_start;                       \
+  data->expected_end = _expected_end;                           \
   total++;                                                      \
   if (data->compile_opts & G_REGEX_OPTIMIZE)                    \
     path = g_strdup_printf ("/regex/match/partial-optimized/%d", total); \
@@ -712,7 +768,7 @@ test_partial (gconstpointer d)
     path = g_strdup_printf ("/regex/match/partial%d", total);   \
   g_test_add_data_func_full (path, data, test_partial, g_free); \
   g_free (path);                                                \
-  data = g_memdup2 (data, sizeof (TestMatchData));              \
+  data = g_memdup2 (data, sizeof (TestPartialData));            \
   if (data->compile_opts & G_REGEX_OPTIMIZE)                    \
     {                                                           \
       data->compile_opts &= ~G_REGEX_OPTIMIZE;                  \
@@ -727,7 +783,9 @@ test_partial (gconstpointer d)
   g_free (path);                                                \
 }
 
-#define TEST_PARTIAL(_pattern, _string, _compile_opts, _expected) TEST_PARTIAL_FULL(_pattern, _string, _compile_opts, G_REGEX_MATCH_PARTIAL, _expected)
+#define TEST_PARTIAL(_pattern, _string, _compile_opts, \
+                     _expected, _expected_start, _expected_end) \
+        TEST_PARTIAL_FULL(_pattern, _string, _compile_opts, G_REGEX_MATCH_PARTIAL, _expected, _expected_start, _expected_end)
 
 typedef struct {
   const gchar *pattern;
@@ -865,6 +923,7 @@ test_named_sub_pattern (gconstpointer d)
 }
 
 typedef struct {
+  GRegexMatchFlags match_opts;
   const gchar *pattern;
   const gchar *string;
   GSList *expected;
@@ -883,7 +942,7 @@ test_fetch_all (gconstpointer d)
   gint match_count;
   gint i;
 
-  regex = g_regex_new (data->pattern, G_REGEX_DEFAULT, G_REGEX_MATCH_DEFAULT, NULL);
+  regex = g_regex_new (data->pattern, G_REGEX_DEFAULT, data->match_opts, NULL);
 
   g_assert (regex != NULL);
 
@@ -917,36 +976,39 @@ free_fetch_all_data (gpointer _data)
   g_free (data);
 }
 
-#define TEST_FETCH_ALL0(_pattern, _string) {                                   \
+#define TEST_FETCH_ALL0(_pattern, _string, _match_opts) {                      \
   TestFetchAllData *data;                                                      \
   gchar *path;                                                                 \
   data = g_new0 (TestFetchAllData, 1);                                         \
   data->pattern = _pattern;                                                    \
   data->string = _string;                                                      \
+  data->match_opts = _match_opts;                                              \
   data->expected = NULL;                                                       \
   path = g_strdup_printf ("/regex/fetch-all0/%d", ++total);                    \
   g_test_add_data_func_full (path, data, test_fetch_all, free_fetch_all_data); \
   g_free (path);                                                               \
 }
 
-#define TEST_FETCH_ALL1(_pattern, _string, e1) {                               \
+#define TEST_FETCH_ALL1(_pattern, _string, _match_opts, e1) {                  \
   TestFetchAllData *data;                                                      \
   gchar *path;                                                                 \
   data = g_new0 (TestFetchAllData, 1);                                         \
   data->pattern = _pattern;                                                    \
   data->string = _string;                                                      \
+  data->match_opts = _match_opts;                                              \
   data->expected = g_slist_append (NULL, e1);                                  \
   path = g_strdup_printf ("/regex/fetch-all1/%d", ++total);                    \
   g_test_add_data_func_full (path, data, test_fetch_all, free_fetch_all_data); \
   g_free (path);                                                               \
 }
 
-#define TEST_FETCH_ALL2(_pattern, _string, e1, e2) {                           \
+#define TEST_FETCH_ALL2(_pattern, _string, _match_opts, e1, e2) {              \
   TestFetchAllData *data;                                                      \
   gchar *path;                                                                 \
   data = g_new0 (TestFetchAllData, 1);                                         \
   data->pattern = _pattern;                                                    \
   data->string = _string;                                                      \
+  data->match_opts = _match_opts;                                              \
   data->expected = g_slist_append (NULL, e1);                                  \
   data->expected = g_slist_append (data->expected, e2);                        \
   path = g_strdup_printf ("/regex/fetch-all2/%d", ++total);                    \
@@ -954,12 +1016,13 @@ free_fetch_all_data (gpointer _data)
   g_free (path);                                                               \
 }
 
-#define TEST_FETCH_ALL3(_pattern, _string, e1, e2, e3) {                       \
+#define TEST_FETCH_ALL3(_pattern, _string, _match_opts, e1, e2, e3) {          \
   TestFetchAllData *data;                                                      \
   gchar *path;                                                                 \
   data = g_new0 (TestFetchAllData, 1);                                         \
   data->pattern = _pattern;                                                    \
   data->string = _string;                                                      \
+  data->match_opts = _match_opts;                                              \
   data->expected = g_slist_append (NULL, e1);                                  \
   data->expected = g_slist_append (data->expected, e2);                        \
   data->expected = g_slist_append (data->expected, e3);                        \
@@ -1776,10 +1839,7 @@ test_class (void)
   g_assert (!res);
 
   /* Accessing match again should not crash */
-  g_test_expect_message ("GLib", G_LOG_LEVEL_CRITICAL,
-                         "*match_info->pos_valid*");
   g_assert_false (g_match_info_next (match, NULL));
-  g_test_assert_expected_messages ();
 
   g_match_info_free (match);
   g_regex_unref (regex);
@@ -2532,6 +2592,49 @@ test_compiled_regex_after_jit_failure (void)
 }
 
 static void
+test_jit_disabled_by_pattern (void)
+{
+  GRegex *regex = NULL;
+  GError *error = NULL;
+
+  g_test_summary ("Test fallback when a pattern disables JIT compilation");
+
+  regex = g_regex_new ("(*NO_JIT)^a$", G_REGEX_OPTIMIZE, 0, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (regex);
+  g_assert_true (g_regex_match (regex, "a", 0, NULL));
+
+  g_regex_unref (regex);
+}
+
+static void
+test_jit_uncompiled_match_modes (void)
+{
+  static const GRegexMatchFlags match_options[] = {
+    G_REGEX_MATCH_PARTIAL_SOFT,
+    G_REGEX_MATCH_PARTIAL_HARD,
+  };
+  GRegex *regex;
+
+  g_test_summary ("Test fallback for JIT modes not compiled at construction");
+
+  regex = g_regex_new ("^abc$", G_REGEX_OPTIMIZE, 0, NULL);
+  for (guint i = 0; i < G_N_ELEMENTS (match_options); i++)
+    {
+      GMatchInfo *match_info = NULL;
+      GError *error = NULL;
+
+      g_assert_false (g_regex_match_full (regex, "ab", -1, 0,
+                                          match_options[i], &match_info, &error));
+      g_assert_no_error (error);
+      g_assert_true (g_match_info_is_partial_match (match_info));
+      g_match_info_free (match_info);
+    }
+
+  g_regex_unref (regex);
+}
+
+static void
 test_replace_raw_change_case (void)
 {
   GError *local_error = NULL;
@@ -2614,6 +2717,178 @@ test_split_raw (void)
   g_regex_unref (regex);
 }
 
+static void
+test_match_at_end (void)
+{
+  GRegex *re;
+  GMatchInfo *mi = NULL;
+  int start, end;
+  char buf[1] = { 'a' };
+  
+  re = g_regex_new ("a*", G_REGEX_DEFAULT, 0, NULL);
+  g_regex_match_full (re, buf, sizeof (buf), 0, 0, &mi, NULL);
+
+  /* match the 'a' */
+  g_assert_true (g_match_info_fetch_pos (mi, 0, &start, &end));
+  g_assert_cmpint (start, ==, 0);
+  g_assert_cmpint (end, ==, 1);
+
+  /* This match of the empty string at the end used to read after the string */
+  g_assert_true (g_match_info_next (mi, NULL));
+  g_assert_true (g_match_info_fetch_pos (mi, 0, &start, &end));
+  g_assert_cmpint (start, ==, 1);
+  g_assert_cmpint (end, ==, 1);
+
+  g_assert_false (g_match_info_next (mi, NULL));
+
+  g_match_info_free (mi);
+  g_regex_unref (re);
+}
+
+static void
+test_next_next_next (void)
+{
+  GRegex *re;
+  GMatchInfo *mi = NULL;
+  const char *str = "a";
+  int start, end;
+  
+  re = g_regex_new ("a", G_REGEX_DEFAULT, 0, NULL);
+  g_regex_match_full (re, str, 1, 0, 0, &mi, NULL);
+
+  /* match the 'a' */
+  g_assert_true (g_match_info_fetch_pos (mi, 0, &start, &end));
+  g_assert_cmpint (start, ==, 0);
+  g_assert_cmpint (end, ==, 1);
+
+  /* This fails as expected, we're at the end of the string */
+  g_assert_false (g_match_info_next (mi, NULL));
+
+  /* Repeated calls to g_match_info_next() are fine */
+  g_assert_false (g_match_info_next (mi, NULL));
+  g_assert_false (g_match_info_next (mi, NULL));
+  g_assert_false (g_match_info_next (mi, NULL));
+  g_assert_false (g_match_info_next (mi, NULL));
+  g_assert_false (g_match_info_next (mi, NULL));
+
+  g_match_info_free (mi);
+  g_regex_unref (re);
+}
+
+typedef struct
+{
+  GMutex mutex;
+  GCond cond;
+  gint n_ready;
+  gint start;
+} RegexThreadBarrier;
+
+typedef struct
+{
+  GRegex *regex;
+  GRegexMatchFlags match_options;
+  RegexThreadBarrier *barrier;
+} RegexThreadData;
+
+static gpointer
+test_jit_thread_safety_worker (gpointer user_data)
+{
+  RegexThreadData *data = user_data;
+
+  g_mutex_lock (&data->barrier->mutex);
+  g_atomic_int_inc (&data->barrier->n_ready);
+  g_cond_broadcast (&data->barrier->cond);
+  while (!g_atomic_int_get (&data->barrier->start))
+    g_cond_wait (&data->barrier->cond, &data->barrier->mutex);
+  g_mutex_unlock (&data->barrier->mutex);
+
+  for (guint i = 0; i < 10; i++)
+    {
+      GMatchInfo *match_info = NULL;
+      GError *error = NULL;
+      gboolean matched;
+
+      matched = g_regex_match_full (data->regex,
+                                    data->match_options == G_REGEX_MATCH_DEFAULT ?
+                                      "token255" : "token",
+                                    -1, 0, data->match_options,
+                                    &match_info, &error);
+      g_assert_no_error (error);
+      if (data->match_options == G_REGEX_MATCH_DEFAULT)
+        g_assert_true (matched);
+      else
+        {
+          g_assert_false (matched);
+          g_assert_true (g_match_info_is_partial_match (match_info));
+        }
+      g_match_info_free (match_info);
+    }
+
+  return NULL;
+}
+
+static void
+test_jit_thread_safety (void)
+{
+  static const GRegexMatchFlags match_options[] = {
+    G_REGEX_MATCH_DEFAULT,
+    G_REGEX_MATCH_PARTIAL_SOFT,
+    G_REGEX_MATCH_PARTIAL_HARD,
+  };
+  RegexThreadData data[12];
+  GThread *threads[G_N_ELEMENTS (data)];
+  GString *pattern;
+
+  g_test_bug ("https://gitlab.gnome.org/GNOME/glib/-/issues/3996");
+  g_test_summary ("Test optimized matching on a shared GRegex from multiple threads");
+
+  pattern = g_string_new ("^(?:");
+  for (guint i = 0; i < 256; i++)
+    g_string_append_printf (pattern, "token%03u|", i);
+  g_string_truncate (pattern, pattern->len - 1);
+  g_string_append (pattern, ")$");
+
+  for (guint mode = 0; mode < G_N_ELEMENTS (match_options); mode++)
+    {
+      RegexThreadBarrier barrier = { 0, };
+      GError *error = NULL;
+      GRegex *regex;
+
+      g_mutex_init (&barrier.mutex);
+      g_cond_init (&barrier.cond);
+
+      regex = g_regex_new (pattern->str, G_REGEX_OPTIMIZE,
+                           match_options[mode], &error);
+      g_assert_no_error (error);
+      g_assert_nonnull (regex);
+
+      for (guint i = 0; i < G_N_ELEMENTS (threads); i++)
+        {
+          data[i].regex = regex;
+          data[i].match_options = match_options[mode];
+          data[i].barrier = &barrier;
+          threads[i] = g_thread_new ("regex-jit", test_jit_thread_safety_worker,
+                                     &data[i]);
+        }
+
+      g_mutex_lock (&barrier.mutex);
+      while ((guint) g_atomic_int_get (&barrier.n_ready) < G_N_ELEMENTS (threads))
+        g_cond_wait (&barrier.cond, &barrier.mutex);
+      g_atomic_int_set (&barrier.start, TRUE);
+      g_cond_broadcast (&barrier.cond);
+      g_mutex_unlock (&barrier.mutex);
+
+      for (guint i = 0; i < G_N_ELEMENTS (threads); i++)
+        g_thread_join (threads[i]);
+
+      g_cond_clear (&barrier.cond);
+      g_mutex_clear (&barrier.mutex);
+      g_regex_unref (regex);
+    }
+
+  g_string_free (pattern, TRUE);
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -2633,10 +2908,16 @@ main (int argc, char *argv[])
   g_test_add_func ("/regex/max-lookbehind", test_max_lookbehind);
   g_test_add_func ("/regex/compile-errors", test_compile_errors);
   g_test_add_func ("/regex/jit-unsupported-matching", test_jit_unsupported_matching_options);
+  g_test_add_func ("/regex/match-without-match-info", test_match_without_match_info);
   g_test_add_func ("/regex/unmatched-named-subpattern", test_unmatched_named_subpattern);
   g_test_add_func ("/regex/compiled-regex-after-jit-failure", test_compiled_regex_after_jit_failure);
+  g_test_add_func ("/regex/jit-disabled-by-pattern", test_jit_disabled_by_pattern);
+  g_test_add_func ("/regex/jit-uncompiled-match-modes", test_jit_uncompiled_match_modes);
+  g_test_add_func ("/regex/jit-thread-safety", test_jit_thread_safety);
   g_test_add_func ("/regex/replace-raw-change-case", test_replace_raw_change_case);
   g_test_add_func ("/regex/split-raw", test_split_raw);
+  g_test_add_func ("/regex/match-at-end", test_match_at_end);
+  g_test_add_func ("/regex/next-next-next", test_next_next_next);
 
   /* TEST_NEW(pattern, compile_opts, match_opts) */
   TEST_NEW("[A-Z]+", G_REGEX_CASELESS | G_REGEX_EXTENDED | G_REGEX_OPTIMIZE, G_REGEX_MATCH_NOTBOL | G_REGEX_MATCH_PARTIAL);
@@ -3002,35 +3283,35 @@ G_GNUC_END_IGNORE_DEPRECATIONS
   TEST_MATCH_COUNT("(a)?(b)", "b", 0, 0, 3);
   TEST_MATCH_COUNT("(a)?(b)", "ab", 0, 0, 3);
 
-  /* TEST_PARTIAL(pattern, string, expected), no JIT */
-  TEST_PARTIAL("^ab", "a", G_REGEX_DEFAULT, TRUE);
-  TEST_PARTIAL("^ab", "xa", G_REGEX_DEFAULT, FALSE);
-  TEST_PARTIAL("ab", "xa", G_REGEX_DEFAULT, TRUE);
-  TEST_PARTIAL("ab", "ab", G_REGEX_DEFAULT, FALSE); /* normal match. */
-  TEST_PARTIAL("a+b", "aa", G_REGEX_DEFAULT, TRUE);
-  TEST_PARTIAL("(a)+b", "aa", G_REGEX_DEFAULT, TRUE);
-  TEST_PARTIAL("a?b", "a", G_REGEX_DEFAULT, TRUE);
+  /* TEST_PARTIAL(pattern, string, expected, expected_start, expected_end), no JIT */
+  TEST_PARTIAL("^ab", "a", G_REGEX_DEFAULT, "a", 0, 1);
+  TEST_PARTIAL("^ab", "xa", G_REGEX_DEFAULT, NULL, 0, 0);
+  TEST_PARTIAL("ab", "xa", G_REGEX_DEFAULT, "a", 1, 2);
+  TEST_PARTIAL("ab", "ab", G_REGEX_DEFAULT, NULL, 0, 0); /* normal match. */
+  TEST_PARTIAL("a+b", "aa", G_REGEX_DEFAULT, "aa", 0, 2);
+  TEST_PARTIAL("(a)+b", "aa", G_REGEX_DEFAULT, "aa", 0, 2);
+  TEST_PARTIAL("a?b", "a", G_REGEX_DEFAULT, "a", 0, 1);
 
-  /* TEST_PARTIAL(pattern, string, expected) with JIT */
-  TEST_PARTIAL("^ab", "a", G_REGEX_OPTIMIZE, TRUE);
-  TEST_PARTIAL("^ab", "xa", G_REGEX_OPTIMIZE, FALSE);
-  TEST_PARTIAL("ab", "xa", G_REGEX_OPTIMIZE, TRUE);
-  TEST_PARTIAL("ab", "ab", G_REGEX_OPTIMIZE, FALSE); /* normal match. */
-  TEST_PARTIAL("a+b", "aa", G_REGEX_OPTIMIZE, TRUE);
-  TEST_PARTIAL("(a)+b", "aa", G_REGEX_OPTIMIZE, TRUE);
-  TEST_PARTIAL("a?b", "a", G_REGEX_OPTIMIZE, TRUE);
+  /* TEST_PARTIAL(pattern, string, expected, expected_start, expected_end) with JIT */
+  TEST_PARTIAL("^ab", "a", G_REGEX_OPTIMIZE, "a", 0, 1);
+  TEST_PARTIAL("^ab", "xa", G_REGEX_OPTIMIZE, NULL, 0, 0);
+  TEST_PARTIAL("ab", "xa", G_REGEX_OPTIMIZE, "a", 1, 2);
+  TEST_PARTIAL("ab", "ab", G_REGEX_OPTIMIZE, NULL, 0, 0); /* normal match. */
+  TEST_PARTIAL("a+b", "aa", G_REGEX_OPTIMIZE, "aa", 0, 2);
+  TEST_PARTIAL("(a)+b", "aa", G_REGEX_OPTIMIZE, "aa", 0, 2);
+  TEST_PARTIAL("a?b", "a", G_REGEX_OPTIMIZE, "a", 0, 1);
 
   /* Test soft vs. hard partial matching, no JIT */
-  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_SOFT, FALSE);
-  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_HARD, TRUE);
-  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_SOFT, FALSE);
-  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_HARD, TRUE);
+  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_SOFT, NULL, 0, 0); /* normal match */
+  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_HARD, "cat", 0, 3);
+  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_SOFT, NULL, 0, 0); /* normal match */
+  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_DEFAULT, G_REGEX_MATCH_PARTIAL_HARD, "ab", 0, 2);
 
   /* Test soft vs. hard partial matching with JIT */
-  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_SOFT, FALSE);
-  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_HARD, TRUE);
-  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_SOFT, FALSE);
-  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_HARD, TRUE);
+  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_SOFT, NULL, 0, 0); /* normal match */
+  TEST_PARTIAL_FULL("cat(fish)?", "cat", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_HARD, "cat", 0, 3);
+  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_SOFT, NULL, 0, 0); /* normal match */
+  TEST_PARTIAL_FULL("ab+", "ab", G_REGEX_OPTIMIZE, G_REGEX_MATCH_PARTIAL_HARD, "ab", 0, 2);
 
   /* TEST_SUB_PATTERN(pattern, string, start_position, sub_n, expected_sub,
    * 		      expected_start, expected_end) */
@@ -3075,20 +3356,24 @@ G_GNUC_END_IGNORE_DEPRECATIONS
   TEST_NAMED_SUB_PATTERN("(?J)(?P<N>x)|(?P<N>a)", "a", 0, "N", "a", 0, 1);
   TEST_NAMED_SUB_PATTERN("(?J)(?P<N>x)y|(?P<N>a)b", "ab", 0, "N", "a", 0, 1);
 
-  /* TEST_FETCH_ALL#(pattern, string, ...) */
-  TEST_FETCH_ALL0("a", "");
-  TEST_FETCH_ALL0("a", "b");
-  TEST_FETCH_ALL1("a", "a", "a");
-  TEST_FETCH_ALL1("a+", "aa", "aa");
-  TEST_FETCH_ALL1("(?:a)", "a", "a");
-  TEST_FETCH_ALL2("(a)", "a", "a", "a");
-  TEST_FETCH_ALL2("a(.)", "ab", "ab", "b");
-  TEST_FETCH_ALL2("a(.)", "a" HSTROKE, "a" HSTROKE, HSTROKE);
-  TEST_FETCH_ALL3("(?:.*)(a)(.)", "xyazk", "xyaz", "a", "z");
-  TEST_FETCH_ALL3("(?P<A>.)(a)", "xa", "xa", "x", "a");
-  TEST_FETCH_ALL3("(?P<A>.)(a)", ENG "a", ENG "a", ENG, "a");
-  TEST_FETCH_ALL3("(a)?(b)", "b", "b", "", "b");
-  TEST_FETCH_ALL3("(a)?(b)", "ab", "ab", "a", "b");
+  /* TEST_FETCH_ALL#(pattern, string, match_opts, ...) */
+  TEST_FETCH_ALL0("a", "", 0);
+  TEST_FETCH_ALL0("a", "b", 0);
+  TEST_FETCH_ALL1("a", "a", 0, "a");
+  TEST_FETCH_ALL1("a+", "aa", 0, "aa");
+  TEST_FETCH_ALL1("(?:a)", "a", 0, "a");
+  TEST_FETCH_ALL1("(a)bc", "ab", G_REGEX_MATCH_PARTIAL_SOFT, "ab");
+  TEST_FETCH_ALL1("(a)bc", "ab", G_REGEX_MATCH_PARTIAL_HARD, "ab");
+  TEST_FETCH_ALL1("(a)b+", "ab", G_REGEX_MATCH_PARTIAL_HARD, "ab");
+  TEST_FETCH_ALL2("(a)b+", "ab", G_REGEX_MATCH_PARTIAL_SOFT, "ab", "a"); /* normal match */
+  TEST_FETCH_ALL2("(a)", "a", 0, "a", "a");
+  TEST_FETCH_ALL2("a(.)", "ab", 0, "ab", "b");
+  TEST_FETCH_ALL2("a(.)", "a" HSTROKE, 0, "a" HSTROKE, HSTROKE);
+  TEST_FETCH_ALL3("(?:.*)(a)(.)", "xyazk", 0, "xyaz", "a", "z");
+  TEST_FETCH_ALL3("(?P<A>.)(a)", "xa", 0, "xa", "x", "a");
+  TEST_FETCH_ALL3("(?P<A>.)(a)", ENG "a", 0, ENG "a", ENG, "a");
+  TEST_FETCH_ALL3("(a)?(b)", "b", 0, "b", "", "b");
+  TEST_FETCH_ALL3("(a)?(b)", "ab", 0, "ab", "a", "b");
 
   /* TEST_SPLIT_SIMPLE#(pattern, string, ...) */
   TEST_SPLIT_SIMPLE0("", "");

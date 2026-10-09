@@ -35,6 +35,8 @@
 #error "Only <glib.h> can be included directly."
 #endif
 
+#include <errno.h>
+
 /* We include stddef.h to get the system's definition of NULL
  */
 #include <stddef.h>
@@ -1372,7 +1374,7 @@
 
 #ifndef __GI_SCANNER__
 
-#if g_macro__has_attribute(cleanup)
+#if g_macro__has_attribute(cleanup) && !defined (G_DISABLE_CLEANUP)
 
 /* these macros are private; note that gstdio.h also uses _GLIB_CLEANUP */
 #define _GLIB_AUTOPTR_FUNC_NAME(TypeName) glib_autoptr_cleanup_##TypeName
@@ -1428,7 +1430,7 @@
 #define g_auto(TypeName) _GLIB_CLEANUP(_GLIB_AUTO_FUNC_NAME(TypeName)) TypeName
 #define g_autofree _GLIB_CLEANUP(g_autoptr_cleanup_generic_gfree)
 
-#else /* not GNU C */
+#else /* cleanup is unavailable or disabled */
 /* this (dummy) macro is private */
 #define _GLIB_DEFINE_AUTOPTR_CHAINUP(ModuleObjName, ParentName)
 
@@ -1438,7 +1440,7 @@
 #define G_DEFINE_AUTO_CLEANUP_FREE_FUNC(TypeName, func, none)
 
 /* no declaration of g_auto() or g_autoptr() here */
-#endif /* __GNUC__ */
+#endif /* cleanup is unavailable or disabled */
 
 #else
 
@@ -1465,5 +1467,60 @@
 #define G_SIZEOF_MEMBER(struct_type, member) \
     GLIB_AVAILABLE_MACRO_IN_2_64 \
     sizeof (((struct_type *) 0)->member)
+
+/**
+ * G_SAVE_ERRNO:
+ * @var: A variable name, traditionally `errsv`
+ *
+ * Helper to save and restore `errno`.
+ *
+ * This macro declares a variable named @var,
+ * and initializes it from `errno`.
+ * When control flow leaves the enclosing scope,
+ * the saved value is stored back into `errno`.
+ * This is convenient to use when handling an error using functions that
+ * could overwrite ("clobber") the value of `errno`,
+ * such as anything that might allocate memory:
+ *
+ * |[
+ * if (g_unlink (path) < 0)
+ *   {
+ *     G_SAVE_ERRNO (errsv);
+ *     g_autofree char *details = get_more_details ();
+ *
+ *     g_info ("could not delete %s (%s): %s",
+ *             path, details, g_strerror (errsv));
+ *   }
+ *
+ * // now errno is as set by g_unlink(), even if get_more_details()
+ * // or g_info() temporarily changed it
+ * ]|
+ *
+ * This feature is only supported on GCC and clang.  This macro is not
+ * defined on other compilers and should not be used in programs that
+ * are intended to be portable to those compilers.
+ *
+ * Since: 2.92
+ */
+
+/* G_SAVE_ERRNO should be defined on the same compilers where g_auto is.
+ * This avoids duplicating the feature-detection here. */
+#ifdef g_auto
+
+#ifndef __GTK_DOC_IGNORE__
+static inline void
+_g_saved_errno_restore (int *errsv_p)
+{
+  errno = *errsv_p;
+}
+typedef int _g_saved_errno;
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (_g_saved_errno, _g_saved_errno_restore)
+#endif
+
+#define G_SAVE_ERRNO(var)      \
+  GLIB_AVAILABLE_MACRO_IN_2_92 \
+  g_auto(_g_saved_errno) G_GNUC_UNUSED var = errno
+
+#endif /* defined(g_auto) */
 
 #endif /* __G_MACROS_H__ */

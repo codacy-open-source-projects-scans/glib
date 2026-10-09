@@ -16,13 +16,25 @@ girepository_tests = {
 # Some tests require GIR files to have been generated
 if enable_gir
   glib_gir_testing_dep = glib_gir
+  if host_system == 'windows'
+    glib_platform_gir_testing_dep = [
+      glib_gir_testing_dep,
+      glib_win32_gir,
+    ]
+  else
+    glib_platform_gir_testing_dep = [
+      glib_gir_testing_dep,
+      glib_unix_gir,
+    ]
+  endif
+
   gobject_gir_testing_dep = [
-    glib_gir_testing_dep,
+    glib_platform_gir_testing_dep,
     gobject_gir,
   ]
 
   gmodule_gir_testing_dep = [
-    glib_gir_testing_dep,
+    glib_platform_gir_testing_dep,
     gmodule_gir,
   ]
 
@@ -48,11 +60,11 @@ if enable_gir
       'depends': gio_gir_testing_dep,
     },
     'field-info' : {
-      'depends': glib_gir_testing_dep,
+      'depends': glib_platform_gir_testing_dep,
     },
     'function-info' : {
       'dependencies': [libffi_dep],
-      'depends': glib_gir_testing_dep,
+      'depends': glib_platform_gir_testing_dep,
     },
     'ir-parser' : {
       'dependencies': [libgirepository_internals_dep],
@@ -69,7 +81,7 @@ if enable_gir
     },
     'repository-search-paths' : {
       'c_args': '-DGOBJECT_INTROSPECTION_LIBDIR="@0@"'.format(glib_libdir),
-      'depends': glib_gir_testing_dep,
+      'depends': glib_platform_gir_testing_dep,
     },
     'struct-info' : {
       'depends': gobject_gir_testing_dep,
@@ -78,7 +90,7 @@ if enable_gir
       'depends': gio_gir_testing_dep,
     },
     'union-info' : {
-      'depends': glib_gir_testing_dep,
+      'depends': glib_platform_gir_testing_dep,
     },
   }
 
@@ -112,9 +124,20 @@ foreach test_name, extra_args : girepository_tests
     test_conf.set('program', test_name)
     test_env_override = ''
     if installed_tests_env != {}
+      # FIXME: Ideally meson should handle this for us.
+      # https://github.com/mesonbuild/meson/issues/16126
+      if installed_tests_env.has_key(glib_exec_var_preload)
+        installed_tests_env += {
+          'ASAN_OPTIONS': ','.join([
+            glib_exec_asan_option_ignore_preload,
+            installed_tests_env.get('ASAN_OPTIONS', ''),
+         ]),
+        }
+      endif
+
       envs = []
       foreach var, value : installed_tests_env
-         envs += '@0@=@1@'.format(var, value)
+        envs += '@0@=\'@1@\''.format(var, value)
       endforeach
       test_env_override = '@0@ @1@ '.format(env_program.full_path(), ' '.join(envs))
     endif
@@ -154,7 +177,28 @@ foreach test_name, extra_args : girepository_tests
   endforeach
 
   local_test_env = test_env
-  foreach var, value : extra_args.get('env', {})
+  local_test_env_args = extra_args.get('env', {})
+  # FIXME: Ideally meson should handle this for us.
+  # https://github.com/mesonbuild/meson/issues/16126
+  if local_test_env_args.has_key(glib_exec_var_preload)
+    if glib_exec_preloaded_env.has_key(glib_exec_var_preload)
+      local_test_env_args += {
+        glib_exec_var_preload: glib_exec_var_preload_separator.join([
+          glib_exec_preloaded_env.get(glib_exec_var_preload),
+          local_test_env_args.get(glib_exec_var_preload),
+        ])
+      }
+    else
+      local_test_env_args += {
+        'ASAN_OPTIONS': ','.join([
+          glib_exec_asan_option_ignore_preload,
+          local_test_env_args.get('ASAN_OPTIONS', ''),
+        ]),
+      }
+    endif
+  endif
+
+  foreach var, value : local_test_env_args
     local_test_env.append(var, value)
   endforeach
 

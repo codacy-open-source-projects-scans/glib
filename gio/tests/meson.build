@@ -59,7 +59,10 @@ gio_tests = {
   'buffered-input-stream' : {},
   'buffered-output-stream' : {},
   'cancellable' : {},
-  'contexts' : {},
+  'contexts' : {
+    # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+    'can_fail': 'thread' in glib_sanitizers,
+  },
   'contenttype' : {},
   'converter-stream' : {
     # musl: charset tests fail due to missing collation support in musl libc
@@ -82,11 +85,14 @@ gio_tests = {
   'gsubprocess' : {
     'suite': host_system == 'windows' ? ['flaky'] : [],
     'extra_programs': ['gsubprocess-testprog'],
+    # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+    'can_fail': 'thread' in glib_sanitizers,
   },
   'g-file' : {},
   'g-file-info' : {
     # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3148
-    'can_fail' : host_system in ['gnu'] or host_system == 'windows' and cc.get_id() != 'gcc',
+    'can_fail' : host_system in ['gnu'] or (
+      host_system in ['windows'] and cc.get_argument_syntax() != 'gcc'),
   },
   'g-icon' : {},
   'gdbus-addresses' : {},
@@ -96,7 +102,9 @@ gio_tests = {
     'install_rpath' : installed_tests_execdir,
     # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1392
     # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3148
-    'can_fail' : host_system in ['darwin', 'windows', 'gnu'],
+    'can_fail' : host_system in ['darwin', 'windows', 'gnu'] or
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'thread' in glib_sanitizers,
   },
   'file-enumerator' : {},
   'inet-address' : {},
@@ -105,7 +113,10 @@ gio_tests = {
     # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3906
     'can_fail' : host_system in ['freebsd'],
   },
-  'max-version' : {'install' : false},
+  'max-version' : {
+    'install' : false,
+    'c_args' : c_standards.has_key('99') ? [c_standards['99']] : [],
+  },
   'memory-input-stream' : {},
   'memory-monitor' : {},
   'memory-output-stream' : {},
@@ -113,7 +124,10 @@ gio_tests = {
   'mount-operation' : {},
   'network-address' : {'extra_sources': ['mock-resolver.c']},
   'network-monitor' : {},
-  'network-monitor-race' : {},
+  'network-monitor-race' : {
+    # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+    'can_fail': 'thread' in glib_sanitizers,
+  },
   'null-settings-backend' : {},
   'permission' : {},
   'pollable' : {'dependencies' : [libutil_dep]},
@@ -161,13 +175,23 @@ gio_tests = {
 
 if host_system == 'linux'
   gio_tests += {
-    'memory-monitor-psi' : {},
+    'memory-monitor-psi' : {
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
+    },
+    'memory-monitor-psi-env-set' : {
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
+    },
   }
 endif
 
 if glib_conf.has('HAVE_SYSINFO')
   gio_tests += {
-    'memory-monitor-poll' : {},
+    'memory-monitor-poll' : {
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
+    },
   }
 endif
 
@@ -215,10 +239,18 @@ python_tests = {
   },
   'gdbus-tool.py' : {
     'depends' : gdbus_tool,
-    'env': {'_G_TEST_PROGRAM_RUNNER_PATH': fs.parent(gdbus_tool.full_path())},
+    'env': {
+      '_G_TEST_PROGRAM_RUNNER_PATH': fs.parent(gdbus_tool.full_path()),
+      # FIXME: PyGObject is leaking some GI Info instances.
+      # https://gitlab.gnome.org/GNOME/pygobject/-/work_items/770
+      'ASAN_OPTIONS': 'detect_leaks=0',
+    },
   },
   'gio-tool.py' : {
-    'depends' : gio_tool,
+    'depends' : [
+      gio_tool,
+      have_gio_launch_desktop ? gio_launch_desktop : [],
+    ],
     'env': {'_G_TEST_PROGRAM_RUNNER_PATH': fs.parent(gio_tool.full_path())},
     'can_fail' : host_system == 'windows',
   },
@@ -229,7 +261,7 @@ test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
 test_env.set('GIO_MODULE_DIR', '')
 
-if host_system != 'windows' and not glib_have_cocoa
+if have_gio_launch_desktop
   test_env.set('GIO_LAUNCH_DESKTOP', gio_launch_desktop.full_path())
 endif
 
@@ -258,12 +290,17 @@ if dbus1_dep.found()
     },
     'gdbus-server-auth' : {
       'dependencies' : [dbus1_dep],
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
     },
   }
 else
   # We can build a cut-down version of this test without libdbus
   gio_tests += {
-    'gdbus-server-auth' : {},
+    'gdbus-server-auth' : {
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
+    },
   }
 endif
 
@@ -335,35 +372,29 @@ if host_machine.system() != 'windows'
     'g-file-info-filesystem-readonly' : {},
     'gschema-compile' : {'install' : false},
     'trash' : {
-      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3069
-      'can_fail' : host_system == 'darwin',
     },
   }
 
   if have_rtld_next and glib_build_shared
-    asan_env = {}
-    if 'address' in glib_sanitizers
-      asan_env = {'ASAN_OPTIONS': 'verify_asan_link_order=0'}
-    endif
+    slow_connect_preload_lib = shared_library('slow-connect-preload',
+      'slow-connect-preload.c',
+      name_prefix : '',
+      dependencies: libdl_dep,
+      install_dir : installed_tests_execdir,
+      install_tag : 'tests',
+      install: installed_tests_enabled,
+    )
 
     gio_tests += {
       'gsocketclient-slow' : {
-        'depends' : [
-          shared_library('slow-connect-preload',
-            'slow-connect-preload.c',
-            name_prefix : '',
-            dependencies: libdl_dep,
-            install_dir : installed_tests_execdir,
-            install_tag : 'tests',
-            install: installed_tests_enabled,
-          )
-        ],
+        'depends' : slow_connect_preload_lib,
         'env' : {
-          'LD_PRELOAD': '@0@/slow-connect-preload.so'.format(meson.current_build_dir())
-        } + asan_env,
+          glib_exec_var_preload: slow_connect_preload_lib.full_path(),
+        },
         'installed_tests_env' : {
-          'LD_PRELOAD': '@0@/slow-connect-preload.so'.format(installed_tests_execdir),
-        } + asan_env,
+          glib_exec_var_preload: installed_tests_execdir /
+            fs.name(slow_connect_preload_lib.full_path()),
+        },
       },
     }
   endif
@@ -375,6 +406,8 @@ if host_machine.system() != 'windows'
       'appinfo' : {
         'install' : false,
         'extra_programs' : ['appinfo-test'],
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
     }
   endif
@@ -471,14 +504,27 @@ if host_machine.system() != 'windows'
       'actions' : {
         'extra_sources' : extra_sources,
         'suite' : ['slow'],
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
       'fdo-notification-backend': {},
-      'gdbus-auth' : {'extra_sources' : extra_sources},
+      'gdbus-auth' : {
+        'extra_sources' : extra_sources,
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
+      },
+      'gdbus-auth-mechanism-sha1': {'extra_sources' : extra_sources},
       'gdbus-bz627724' : {'extra_sources' : extra_sources},
-      'gdbus-close-pending' : {'extra_sources' : extra_sources},
+      'gdbus-close-pending' : {
+        'extra_sources' : extra_sources,
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
+      },
       'gdbus-connection' : {
         'extra_sources' : extra_sources,
         'extra_programs': extra_programs,
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
       'gdbus-connection-loss' : {
         'extra_sources' : extra_sources,
@@ -491,9 +537,15 @@ if host_machine.system() != 'windows'
         'can_fail' : host_system == 'gnu',
       },
       'gdbus-error' : {'extra_sources' : extra_sources},
-      'gdbus-exit-on-close' : {'extra_sources' : extra_sources},
+      'gdbus-exit-on-close' : {
+        'extra_sources' : extra_sources,
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
+      },
       'gdbus-export' : {
         'extra_sources' : extra_sources,
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
         'suite' : ['slow'],
       },
       'gdbus-introspection' : {
@@ -504,6 +556,8 @@ if host_machine.system() != 'windows'
       'gdbus-names' : {
         'extra_sources' : extra_sources,
         'extra_programs' : ['fake-service-name'],
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
       'gdbus-proxy' : {
         'extra_sources' : extra_sources,
@@ -536,10 +590,14 @@ if host_machine.system() != 'windows'
         'extra_sources' : extra_sources,
         'extra_programs': extra_programs,
         'suite' : ['slow'],
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
       'gmenumodel' : {
         'extra_sources' : extra_sources,
         'suite' : ['slow'],
+        # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+        'can_fail': 'thread' in glib_sanitizers,
       },
       'gnotification' : {
         'extra_sources' : [extra_sources, 'gnotification-server.c'],
@@ -626,9 +684,11 @@ if host_machine.system() != 'windows'
           'install' : false,
           'depends' : gio_launch_desktop,
           'extra_programs' : ['apps', 'appinfo-test', 'snapinfo-test'],
-          # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3148
-          'can_fail' : host_system == 'gnu',
           'extra_sources' : [extra_sources, fake_document_portal_sources],
+          # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/3148
+          'can_fail' : (host_system == 'gnu' or
+            # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+            'thread' in glib_sanitizers),
         },
       }
     endif
@@ -649,9 +709,13 @@ if host_machine.system() != 'windows'
   gio_tests += {
     'gdbus-connection-flush' : {
       'extra_sources' : ['test-io-stream.c', 'test-pipe-unix.c'],
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
     },
     'gdbus-non-socket' : {
       'extra_sources' : ['gdbus-tests.c', 'test-io-stream.c', 'test-pipe-unix.c'],
+      # FIXME: https://gitlab.gnome.org/GNOME/glib/-/issues/1672
+      'can_fail': 'thread' in glib_sanitizers,
     },
   }
 
@@ -1089,7 +1153,7 @@ if not meson.is_cross_build()
                                   '-nostdlib', '@INPUT@', '-o','@OUTPUT@'])
 
     # Rename symbol to match the one in the C file
-    if cc.get_id() == 'gcc' and host_system == 'windows'
+    if cc.get_argument_syntax() == 'gcc' and host_system == 'windows'
       underscore = '_'
     else
       underscore = ''
@@ -1119,6 +1183,7 @@ if not meson.is_cross_build()
     'resources' : {
       'c_args' : resources_c_args,
       'extra_sources' : resources_extra_sources,
+      'dependencies' : [gvdb_dep],
       'depends' : resource_plugin,
       # FIXME: musl: https://gitlab.gnome.org/GNOME/glib/-/issues/3160
       'can_fail' : linux_libc == 'musl',
@@ -1155,9 +1220,20 @@ foreach test_name, extra_args : gio_tests
     test_conf.set('program', test_name)
     test_env_override = ''
     if installed_tests_env != {}
+      # FIXME: Ideally meson should handle this for us.
+      # https://github.com/mesonbuild/meson/issues/16126
+      if installed_tests_env.has_key(glib_exec_var_preload)
+        installed_tests_env += {
+          'ASAN_OPTIONS': ','.join([
+            glib_exec_asan_option_ignore_preload,
+            installed_tests_env.get('ASAN_OPTIONS', ''),
+         ]),
+        }
+      endif
+
       envs = []
       foreach var, value : installed_tests_env
-         envs += '@0@=@1@'.format(var, value)
+        envs += '@0@=\'@1@\''.format(var, value)
       endforeach
       test_env_override = '@0@ @1@ '.format(env_program.full_path(), ' '.join(envs))
     endif
@@ -1190,7 +1266,28 @@ foreach test_name, extra_args : gio_tests
     depends += test_extra_programs_targets[program]
   endforeach
 
-  foreach var, value : extra_args.get('env', {})
+  local_test_env_args = extra_args.get('env', {})
+  # FIXME: Ideally meson should handle this for us.
+  # https://github.com/mesonbuild/meson/issues/16126
+  if local_test_env_args.has_key(glib_exec_var_preload)
+    if glib_exec_preloaded_env.has_key(glib_exec_var_preload)
+      local_test_env_args += {
+        glib_exec_var_preload: glib_exec_var_preload_separator.join([
+          glib_exec_preloaded_env.get(glib_exec_var_preload),
+          local_test_env_args.get(glib_exec_var_preload),
+        ])
+      }
+    else
+      local_test_env_args += {
+        'ASAN_OPTIONS': ','.join([
+          glib_exec_asan_option_ignore_preload,
+          local_test_env_args.get('ASAN_OPTIONS', ''),
+        ]),
+      }
+    endif
+  endif
+
+  foreach var, value : local_test_env_args
     local_test_env.append(var, value)
   endforeach
 
@@ -1230,7 +1327,38 @@ foreach test_name, extra_args : python_tests
   endforeach
 
   local_test_env = python_test_env
-  foreach var, value : extra_args.get('env', {})
+  local_test_env_args = extra_args.get('env', {})
+  if (glib_exec_preloaded_env.has_key(glib_exec_var_preload) and
+      not local_test_env_args.has_key(glib_exec_var_preload))
+    local_test_env_args += {
+      glib_exec_var_preload: glib_exec_preloaded_env.get(glib_exec_var_preload),
+    }
+  endif
+
+  # FIXME: Ideally meson should handle this for us.
+  # https://github.com/mesonbuild/meson/issues/16126
+  if local_test_env_args.has_key(glib_exec_var_preload)
+    if glib_exec_preloaded_env.has_key(glib_exec_var_preload)
+      test_preload = local_test_env_args.get(glib_exec_var_preload)
+      if test_preload != glib_exec_preloaded_env.get(glib_exec_var_preload)
+        local_test_env_args += {
+          glib_exec_var_preload: glib_exec_var_preload_separator.join([
+            glib_exec_preloaded_env.get(glib_exec_var_preload),
+            test_preload,
+          ])
+        }
+      endif
+    else
+      local_test_env_args += {
+        'ASAN_OPTIONS': ','.join([
+          glib_exec_asan_option_ignore_preload,
+          local_test_env_args.get('ASAN_OPTIONS', ''),
+        ]),
+      }
+    endif
+  endif
+
+  foreach var, value : local_test_env_args
     local_test_env.append(var, value)
   endforeach
 

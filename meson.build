@@ -1,5 +1,5 @@
 project('glib', 'c',
-  version : '2.89.0',
+  version : '2.91.0',
   # NOTE: See the policy in docs/meson-version.md before changing the Meson dependency
   meson_version : '>= 1.4.0',
   default_options : [
@@ -7,9 +7,9 @@ project('glib', 'c',
     'warning_level=3',
     # FIXME: After https://github.com/mesonbuild/meson/issues/13639 is
     # fixed, change this to
-    # meson.version().version_compare('>=FIXED_MESON_VERSION') ? 'c_std=gnu99,c99' : 'c_std=gnu99'
+    # meson.version().version_compare('>=FIXED_MESON_VERSION') ? 'c_std=gnu11,c11' : 'c_std=gnu11'
     # to avoid a warning on MSVC.
-    'c_std=gnu99'
+    'c_std=gnu11',
   ]
 )
 
@@ -240,6 +240,7 @@ if valgrind.found()
     env: common_test_env,
     timeout_multiplier: 20,
   )
+  meson.add_devenv({'VALGRIND_OPTS': '--suppressions=' + valgrind_suppression_file.full_path()}, method : 'append')
 endif
 
 add_project_arguments('-D_GNU_SOURCE', language: ['c', 'cpp', 'objc', 'objcpp'])
@@ -260,6 +261,21 @@ if host_system == 'windows'
 
   # Script to obtain paths where the DLLs that we will reside for g-ir-scanner
   get_dll_paths_script = find_program('tools/grab-gio-dll-paths.py', native: true)
+endif
+
+if host_system == 'windows'
+  # See https://gitlab.gnome.org/GNOME/glib/-/work_items/4065
+
+  # Using this prefix allow us to not error out if <_mingw.h>
+  # doesn't exist, which could happen if we are being built by MSVC
+  mingw64_version = cc.get_define('__MINGW64_VERSION_STR', prefix: '#include <stdlib.h>').strip('"')
+  if mingw64_version != ''
+    min_mingw64_version = '12.0.0'
+
+    if mingw64_version.version_compare('<@0@'.format(min_mingw64_version))
+      error('MINGW-w64 @0@ or newer is required (found version @1@)'.format(min_mingw64_version, mingw64_version))
+    endif
+  endif
 endif
 
 # Disable strict aliasing;
@@ -341,8 +357,6 @@ if glib_build_static_only
   glibconfig_conf.set('GIO_STATIC_COMPILATION', '1')
   glibconfig_conf.set('GMODULE_STATIC_COMPILATION', '1')
   glibconfig_conf.set('GI_STATIC_COMPILATION', '1')
-  glibconfig_conf.set('G_INTL_STATIC_COMPILATION', '1')
-  glibconfig_conf.set('FFI_STATIC_BUILD', '1')
 endif
 
 # Cygwin glib port maintainers made it clear
@@ -576,7 +590,7 @@ foreach m : struct_members
 endforeach
 
 # Compiler flags
-if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
+if cc.get_argument_syntax() == 'gcc'
   warning_common_args = [
     '-Wduplicated-branches',
     '-Wfloat-conversion',
@@ -613,11 +627,9 @@ if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
     '-Werror=implicit-function-declaration',
     '-Werror=missing-prototypes',
     '-Werror=pointer-sign',
+    # Public headers must support C99, even though GLib itself requires C11.
+    '-Werror=typedef-redefinition',
     '-Wno-string-plus-int',
-    # We require a compiler that supports C11 even though it's not yet a
-    # strict requirement, so allow typedef redefinition not to break clang and
-    # older gcc versions.
-    '-Wno-typedef-redefinition',
   ]
   warning_cxx_args = warning_common_args
   warning_c_link_args = [
@@ -1044,6 +1056,13 @@ if host_system == 'qnx'
   glib_conf.set('HAVE_QNX', 1)
 endif
 
+if host_system == 'windows'
+  if not cc.has_header_symbol('fcntl.h', 'O_CLOEXEC')
+    glib_conf.set('O_CLOEXEC', 'O_NOINHERIT')
+    glib_conf.set('_O_CLOEXEC', '_O_NOINHERIT')
+  endif
+endif
+
 # Check for futex(2)
 if cc.compiles('''#include <linux/futex.h>
                #include <sys/syscall.h>
@@ -1125,6 +1144,10 @@ if cc.links(clock_gettime_test_code, name : 'clock_gettime')
 elif cc.links(clock_gettime_test_code, args : '-lrt', name : 'clock_gettime in librt')
   glib_conf.set('HAVE_CLOCK_GETTIME', 1)
   librt = cc.find_library('rt')
+endif
+
+if cc.has_function('clock_nanosleep', prefix : '#include <time.h>')
+  glib_conf.set('HAVE_CLOCK_NANOSLEEP', 1)
 endif
 
 dlopen_dlsym_test_code = '''
@@ -1809,7 +1832,7 @@ g_sizet_compatibility = {
 # Do separate checks for gcc/clang (and ignore other compilers for now), since
 # we need to explicitly pass -Werror to the compilers.
 # FIXME: https://github.com/mesonbuild/meson/issues/5399
-if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
+if cc.get_argument_syntax() == 'gcc'
   foreach type_name, size_compatibility : g_sizet_compatibility
     g_sizet_compatibility += { type_name: size_compatibility and
       cc.compiles(
@@ -2107,7 +2130,7 @@ if cc.get_id() == 'msvc' or cc.get_id() == 'clang-cl' or cc.links(atomictest, na
     glib_conf.set('__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4', true)
   endif
 
-  if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
+  if cc.get_argument_syntax() == 'gcc'
     sync_swap_test = '''
       int main() {
         int atomic = 2;
@@ -2722,6 +2745,89 @@ if gobject_introspection.version().version_compare('>=1.83.2')
   gir_args += [
     '--doc-format=gi-docgen',
   ]
+endif
+
+glib_exec_preloaded_libs = []
+glib_exec_preloaded_env = {}
+
+if host_system in ['ios', 'darwin']
+  glib_exec_var_library_path = 'DYLD_LIBRARY_PATH'
+  glib_exec_var_preload = 'DYLD_INSERT_LIBRARIES'
+  glib_exec_var_preload_separator = ':'
+else
+  glib_exec_var_library_path = 'LD_LIBRARY_PATH'
+  glib_exec_var_preload = 'LD_PRELOAD'
+  glib_exec_var_preload_separator = ' '
+endif
+
+glib_exec_asan_options_disable = []
+glib_exec_asan_option_ignore_preload = ''
+if 'address' in glib_sanitizers
+  # libasan needs to be the first in the preload list, and that we can’t
+  # guarantee that, so we have to disable its link order checking when using
+  # LD_PRELOAD in tests.
+  glib_exec_asan_option_ignore_preload = 'verify_asan_link_order=false'
+  glib_exec_asan_options_disable = [
+    glib_exec_asan_option_ignore_preload,
+    'start_deactivated=true',
+    'detect_leaks=false',
+  ]
+endif
+
+if cc.get_argument_syntax() == 'gcc'
+  test_preloaded_libs = []
+
+  if 'address' in glib_sanitizers
+    # ASAN has to be the first in list
+    test_preloaded_libs += 'asan'
+  endif
+
+  if 'undefined' in glib_sanitizers
+    test_preloaded_libs += 'ubsan'
+  endif
+
+  if 'leak' in glib_sanitizers
+    test_preloaded_libs += 'lsan'
+  endif
+
+  if 'thread' in glib_sanitizers
+    test_preloaded_libs += 'tsan'
+
+    if enable_dtrace
+      # Tracing is not meant to be thread-safe, so let's make it incompatible with tsan.
+      error('Using Tracing together with thread sanitizer is not supported.')
+    endif
+  endif
+
+  # FIXME: Ideally meson should handle this for us
+  # https://github.com/mesonbuild/meson/issues/13249
+  foreach libname: test_preloaded_libs
+    lib = run_command(cc,
+      '-print-file-name=lib@0@.so'.format(libname),
+      check: true,
+    ).stdout().strip()
+
+    # Support linker script files
+    if run_command('grep', '-qI', '^INPUT', lib, check: false).returncode() == 0
+      out = run_command('cat', lib, check: true).stdout()
+      lib = out.split('(')[1].split(')')[0].strip()
+    endif
+
+    if lib != '' and lib[0] == '/'
+      message('Found @0@ library as @1@'.format(libname, lib))
+      glib_exec_preloaded_libs += '@0@'.format(files(lib)[0].full_path())
+    else
+      warning('No library found for ' + libname + ', sanitizers [' +
+        ', '.join(glib_sanitizers) + '] executions may fail')
+    endif
+  endforeach
+
+  if glib_exec_preloaded_libs.length() > 0
+    glib_exec_preloaded_env = {
+      glib_exec_var_preload: glib_exec_var_preload_separator.join(
+        glib_exec_preloaded_libs),
+    }
+  endif
 endif
 
 pkg = import('pkgconfig')
